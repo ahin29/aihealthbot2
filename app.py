@@ -338,7 +338,7 @@ with st.sidebar:
 st.markdown("""
 <style>
     .stChatMessage {
-        background-color: #f0f2f6;
+        background-color: #ffffff;
         border-radius: 10px;
         margin: 5px 0;
     }
@@ -350,3 +350,4 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+

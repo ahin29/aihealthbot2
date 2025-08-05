@@ -6,7 +6,7 @@ import os
 
 # Page config
 st.set_page_config(
-    page_title="LinQMD Medical Assistant",
+    page_title="Welcome to LinQMD's Health Assistant",
     page_icon="🏥",
     layout="wide"
 )
@@ -18,10 +18,6 @@ if "patient_summary" not in st.session_state:
     st.session_state.patient_summary = ""
 if "clinical_summary" not in st.session_state:
     st.session_state.clinical_summary = ""
-
-# Constants
-PROMPT_ID = "pmpt_68906b8c98b08197884e6957b551a55a0940c6dfad2636d6"
-PROMPT_VERSION = "3"
 
 def extract_summaries(text):
     """Extract both summaries from AI response"""
@@ -68,67 +64,84 @@ def get_api_key():
             """)
             st.stop()
 
+@st.cache_data
+def load_system_prompt():
+    """Load system prompt from file or secrets"""
+    # Try to load from secrets first
+    try:
+        return st.secrets["MEDICAL_PROMPT"]
+    except:
+        pass
+    
+    # Try to load from file
+    try:
+        with open('medical_prompt.txt', 'r', encoding='utf-8') as f:
+            return f.read()
+    except FileNotFoundError:
+        st.error("""
+        ❌ **Medical prompt not found!**
+        
+        Please either:
+        1. Add your complete prompt (with Section J) to `medical_prompt.txt` file, OR
+        2. Add it to Streamlit secrets as `MEDICAL_PROMPT`
+        
+        The prompt must include the summary generation section with these exact delimiters:
+        - ---BEGIN_PATIENT_SUMMARY---
+        - ---END_PATIENT_SUMMARY---
+        - ---BEGIN_CLINICAL_SUMMARY_CONFIDENTIAL---
+        - ---END_CLINICAL_SUMMARY_CONFIDENTIAL---
+        """)
+        st.stop()
+
 @st.cache_resource
 def get_openai_client():
     """Initialize OpenAI client"""
     api_key = get_api_key()
     return OpenAI(api_key=api_key)
 
-def call_openai_with_prompt_id(messages):
-    """Call OpenAI API using prompt ID"""
+def call_openai(messages):
+    """Call OpenAI API using standard chat completion"""
     try:
         client = get_openai_client()
+        system_prompt = load_system_prompt()
+        model = st.session_state.get("model", "gpt-4")
         
-        # Try using the prompt ID method first
-        try:
-            response = client.responses.create(
-                prompt={
-                    "id": PROMPT_ID,
-                    "version": PROMPT_VERSION
-                },
-                messages=messages
-            )
-            return response.choices[0].message.content
+        # Debug info in sidebar
+        with st.sidebar:
+            with st.expander("🐛 Debug Info", expanded=False):
+                st.write(f"API Key: {'✅ Found' if get_api_key() else '❌ Missing'}")
+                st.write(f"Model: {model}")
+                st.write(f"Prompt: {'✅ Loaded' if system_prompt else '❌ Missing'}")
+                st.write(f"Messages: {len(messages)}")
         
-        except AttributeError:
-            # Fallback to standard chat completion if responses.create is not available
-            # This happens when using standard OpenAI API
-            st.warning("Using standard API method. Make sure your prompt is saved in OpenAI Playground.")
-            
-            # Use standard chat completion with system prompt
-            response = client.chat.completions.create(
-                model=st.session_state.get("model", "gpt-4"),
-                messages=[
-                    {"role": "system", "content": get_system_prompt()},
-                    *messages
-                ],
-                temperature=0.3,
-                max_tokens=2000
-            )
-            return response.choices[0].message.content
-            
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                *messages
+            ],
+            temperature=0.3,
+            max_tokens=2000
+        )
+        
+        return response.choices[0].message.content
+        
     except Exception as e:
-        st.error(f"❌ Error calling OpenAI: {str(e)}")
+        error_msg = str(e)
+        st.error(f"❌ OpenAI API Error: {error_msg}")
+        
+        # Provide specific guidance based on error
+        if "api_key" in error_msg.lower():
+            st.error("Please check your API key in Streamlit secrets.")
+        elif "model" in error_msg.lower():
+            st.error("Try switching to 'gpt-3.5-turbo' in the sidebar.")
+        elif "rate" in error_msg.lower():
+            st.error("Rate limit exceeded. Please wait a moment and try again.")
+        
         return None
 
-def get_system_prompt():
-    """Get system prompt as fallback"""
-    # Try to load from file if prompt ID method fails
-    try:
-        with open('medical_prompt.txt', 'r', encoding='utf-8') as f:
-            return f.read()
-    except FileNotFoundError:
-        return """You are a medical assistant collecting patient information for professional doctors.
-        
-        IMPORTANT: Generate two summaries at the end:
-        1. Patient summary between ---BEGIN_PATIENT_SUMMARY--- and ---END_PATIENT_SUMMARY---
-        2. Clinical summary between ---BEGIN_CLINICAL_SUMMARY_CONFIDENTIAL--- and ---END_CLINICAL_SUMMARY_CONFIDENTIAL---
-        
-        The clinical summary should be detailed and technical, while the patient summary should be simple.
-        """
-
 # Main app
-st.title("Weocome to LinQMD's Health Assistant")
+st.title("🏥 Welcome to LinQMD's Health Assistant")
 
 # Info header
 with st.expander("ℹ️ About this Medical Assistant"):
@@ -140,7 +153,11 @@ with st.expander("ℹ️ About this Medical Assistant"):
     - The AI cannot diagnose or provide medical advice
     - For emergencies, call emergency services immediately
     
-    **Prompt ID:** `pmpt_68906b8c98b08197884e6957b551a55a0940c6dfad2636d6`
+    **How to use:**
+    1. Describe your symptoms in the chat
+    2. Answer the AI's questions
+    3. Say "that's all" when finished
+    4. Get your summary and doctor gets clinical details
     """)
 
 # Create two columns
@@ -174,31 +191,33 @@ with patient_col:
             st.write(prompt)
         
         # Get AI response
-        with st.spinner("AI is thinking..."):
-            full_response = call_openai_with_prompt_id(st.session_state.messages)
-            
-            if full_response:
-                # Extract summaries if present
-                patient_sum, clinical_sum = extract_summaries(full_response)
-                if patient_sum and clinical_sum:
-                    st.session_state.patient_summary = patient_sum
-                    st.session_state.clinical_summary = clinical_sum
+        with st.chat_message("assistant"):
+            with st.spinner("AI is thinking..."):
+                full_response = call_openai(st.session_state.messages)
                 
-                # Clean response for display
-                display_response = clean_response_for_display(full_response)
-                
-                # Save message
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": full_response,
-                    "display": display_response
-                })
-                
-                # Display response
-                with st.chat_message("assistant"):
+                if full_response:
+                    # Extract summaries if present
+                    patient_sum, clinical_sum = extract_summaries(full_response)
+                    if patient_sum and clinical_sum:
+                        st.session_state.patient_summary = patient_sum
+                        st.session_state.clinical_summary = clinical_sum
+                    
+                    # Clean response for display
+                    display_response = clean_response_for_display(full_response)
+                    
+                    # Save message
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": full_response,
+                        "display": display_response
+                    })
+                    
+                    # Display response
                     st.write(display_response)
-            
-            st.rerun()
+                else:
+                    st.error("Failed to get response. Please check the debug info in sidebar.")
+        
+        st.rerun()
 
 # DOCTOR DASHBOARD (Right side)
 with doctor_col:
@@ -235,12 +254,12 @@ with doctor_col:
                 "timestamp": datetime.now().isoformat(),
                 "patient_summary": st.session_state.patient_summary,
                 "clinical_summary": st.session_state.clinical_summary,
-                "conversation": st.session_state.messages,
-                "prompt_id": PROMPT_ID
+                "conversation": st.session_state.messages
             }
+            import json
             st.download_button(
                 "💾 Export JSON",
-                str(export_data),
+                json.dumps(export_data, indent=2),
                 f"consultation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                 mime="application/json"
             )
@@ -254,17 +273,19 @@ with doctor_col:
             - Patient should say "that's all" or "I'm done" to generate summaries
             - Clinical summary includes full medical details
             - Patient only sees simplified summary
+            - Check debug info in sidebar if having issues
             """)
 
 # Sidebar controls
 with st.sidebar:
     st.header("⚙️ Controls")
     
-    # Model selection (for fallback method)
+    # Model selection
     model = st.selectbox(
-        "AI Model (fallback)",
+        "AI Model",
         ["gpt-4", "gpt-3.5-turbo"],
-        help="Used if prompt ID method fails"
+        index=0,
+        help="GPT-4 is more accurate, GPT-3.5 is faster/cheaper"
     )
     st.session_state["model"] = model
     
@@ -272,7 +293,7 @@ with st.sidebar:
     st.divider()
     st.subheader("📊 Session Info")
     st.info(f"Started: {datetime.now().strftime('%I:%M %p')}")
-    st.code(f"Prompt: {PROMPT_ID[:20]}...", language=None)
+    st.code(f"Prompt: pmpt_68906b8c98b0...", language=None)
     
     # Reset button
     if st.button("🔄 New Consultation", type="primary", use_container_width=True):
@@ -287,7 +308,7 @@ with st.sidebar:
     st.markdown("""
     **For Patients:**
     1. Describe symptoms
-    2. Answer questions
+    2. Answer questions  
     3. Say "that's all"
     
     **For Doctors:**
@@ -298,8 +319,8 @@ with st.sidebar:
     
     # Footer
     st.divider()
-    st.caption("🏥 LinQMD Medical Assistant")
-    st.caption("⚡ Powered by OpenAI")
+    st.caption("LinQMD Health Assistant")
+    st.caption("⚡ Powered by Aadya Health Sciences Pvt Ltd")
 
 # Custom CSS
 st.markdown("""

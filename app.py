@@ -24,7 +24,7 @@ if "conversation_history" not in st.session_state:
 
 # Prompt configuration
 PROMPT_ID = "pmpt_68906b8c98b08197884e6957b551a55a0940c6dfad2636d6"
-PROMPT_VERSION = "3"
+PROMPT_VERSION = "4"
 
 def extract_summaries(text):
     """Extract both summaries from AI response"""
@@ -374,3 +374,4 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+

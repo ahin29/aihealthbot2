@@ -28,8 +28,6 @@ response = client.responses.create(
   store=True
 )
 
-# Hardcode your Assistant ID from OpenAI Playground here
-ASSISTANT_ID = "asst_XXXXXXXXXXXXXXXXXXXXXXXX"  # Replace with your actual Assistant ID
 
 # Initialize session state
 if 'thread_id' not in st.session_state:
@@ -179,5 +177,6 @@ if st.button("🔄 New Consultation"):
     st.session_state.patient_summary = ""
     st.session_state.clinical_summary = ""
     st.rerun()
+
 
 

@@ -19,6 +19,12 @@ if "patient_summary" not in st.session_state:
     st.session_state.patient_summary = ""
 if "clinical_summary" not in st.session_state:
     st.session_state.clinical_summary = ""
+if "conversation_history" not in st.session_state:
+    st.session_state.conversation_history = []
+
+# Prompt configuration
+PROMPT_ID = "pmpt_68906b8c98b08197884e6957b551a55a0940c6dfad2636d6"
+PROMPT_VERSION = "3"
 
 def extract_summaries(text):
     """Extract both summaries from AI response"""
@@ -52,42 +58,9 @@ def get_api_key():
             ❌ **OpenAI API Key not found!**
             
             Please add your OpenAI API key to Streamlit secrets:
-            
-            **In Streamlit Cloud:**
-            1. Go to your app settings
-            2. Navigate to 'Secrets' section
-            3. Add: `OPENAI_API_KEY = "sk-your-actual-api-key"`
+            `OPENAI_API_KEY = "sk-your-actual-api-key"`
             """)
             st.stop()
-
-@st.cache_data
-def get_system_prompt():
-    """Get system prompt from secrets"""
-    try:
-        return st.secrets["MEDICAL_PROMPT"]
-    except:
-        st.error("""
-        ❌ **Medical prompt not found in secrets!**
-        
-        Please add your medical prompt to Streamlit secrets:
-        
-        1. Copy your complete prompt from OpenAI Playground
-           (Prompt ID: pmpt_68906b8c98b08197884e6957b551a55a0940c6dfad2636d6)
-        
-        2. In Streamlit Cloud secrets, add:
-        ```
-        MEDICAL_PROMPT = '''
-        [Paste your entire prompt here]
-        '''
-        ```
-        
-        3. Make sure your prompt includes Section J with these delimiters:
-           - ---BEGIN_PATIENT_SUMMARY---
-           - ---END_PATIENT_SUMMARY---
-           - ---BEGIN_CLINICAL_SUMMARY_CONFIDENTIAL---
-           - ---END_CLINICAL_SUMMARY_CONFIDENTIAL---
-        """)
-        st.stop()
 
 @st.cache_resource
 def get_openai_client():
@@ -95,19 +68,92 @@ def get_openai_client():
     api_key = get_api_key()
     return OpenAI(api_key=api_key)
 
-def call_openai(messages):
-    """Call OpenAI API using standard chat completion"""
+def build_conversation_text():
+    """Build conversation history as a single text string"""
+    conversation = ""
+    for msg in st.session_state.messages:
+        role = "Patient" if msg["role"] == "user" else "Assistant"
+        conversation += f"{role}: {msg['content']}\n\n"
+    return conversation.strip()
+
+def call_openai_with_prompt_id(user_message):
+    """Call OpenAI API using prompt ID and responses.create method"""
     try:
         client = get_openai_client()
-        system_prompt = get_system_prompt()
-        model = st.session_state.get("model", "gpt-4")
+        
+        # Build the conversation history
+        conversation_history = build_conversation_text()
+        
+        # Prepare the input with the new user message
+        if conversation_history:
+            full_input = f"{conversation_history}\n\nPatient: {user_message}"
+        else:
+            full_input = f"Patient: {user_message}"
+        
+        # Debug info
+        with st.sidebar:
+            with st.expander("🐛 Debug Info", expanded=False):
+                st.write(f"Prompt ID: {PROMPT_ID}")
+                st.write(f"Version: {PROMPT_VERSION}")
+                st.write(f"Messages: {len(st.session_state.messages)}")
+                st.write("Using responses.create method")
+        
+        # Call OpenAI using the prompt ID
+        response = client.responses.create(
+            prompt={
+                "id": PROMPT_ID,
+                "version": PROMPT_VERSION
+            },
+            input=[{
+                "type": "text",
+                "text": full_input
+            }],
+            text={
+                "format": {
+                    "type": "text"
+                }
+            },
+            reasoning={},
+            max_output_tokens=2048,
+            store=True
+        )
+        
+        # Extract the response text
+        if hasattr(response, 'text') and hasattr(response.text, 'value'):
+            return response.text.value
+        elif hasattr(response, 'choices') and len(response.choices) > 0:
+            return response.choices[0].message.content
+        else:
+            # Try to extract text from response object
+            response_text = str(response)
+            st.write("Debug - Response structure:", response)
+            return response_text
+            
+    except AttributeError as e:
+        st.error(f"The responses.create method is not available. Error: {str(e)}")
+        st.info("Falling back to standard chat completion...")
+        return call_openai_standard(user_message)
+        
+    except Exception as e:
+        st.error(f"❌ OpenAI API Error: {str(e)}")
+        with st.expander("Error Details"):
+            st.write(f"Error type: {type(e).__name__}")
+            st.write(f"Error message: {str(e)}")
+        return None
+
+def call_openai_standard(user_message):
+    """Fallback to standard chat completion if prompt ID method fails"""
+    try:
+        client = get_openai_client()
+        
+        # Build messages array
+        messages = [{"role": "system", "content": "You are a medical assistant. Generate summaries with delimiters ---BEGIN_PATIENT_SUMMARY--- and ---BEGIN_CLINICAL_SUMMARY_CONFIDENTIAL---"}]
+        messages.extend(st.session_state.messages)
+        messages.append({"role": "user", "content": user_message})
         
         response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                *messages
-            ],
+            model="gpt-4",
+            messages=messages,
             temperature=0.3,
             max_tokens=2000
         )
@@ -115,24 +161,7 @@ def call_openai(messages):
         return response.choices[0].message.content
         
     except Exception as e:
-        error_msg = str(e)
-        st.error(f"❌ OpenAI API Error: {error_msg}")
-        
-        # Provide specific guidance
-        if "api_key" in error_msg.lower():
-            st.error("Please check your API key in Streamlit secrets.")
-        elif "model" in error_msg.lower():
-            st.error("Try switching to 'gpt-3.5-turbo' in the sidebar.")
-        elif "rate" in error_msg.lower():
-            st.error("Rate limit exceeded. Please wait and try again.")
-        
-        # Show debug info
-        with st.expander("🐛 Debug Information"):
-            st.write(f"Model: {model}")
-            st.write(f"API Key: {'✅ Found' if get_api_key() else '❌ Missing'}")
-            st.write(f"Prompt: {'✅ Found' if get_system_prompt() else '❌ Missing'}")
-            st.write(f"Message count: {len(messages)}")
-        
+        st.error(f"Standard API also failed: {str(e)}")
         return None
 
 # Main app
@@ -178,7 +207,7 @@ with patient_col:
     
     # Chat input
     if prompt := st.chat_input("Describe your symptoms..."):
-        # Add user message
+        # Add user message to display
         st.session_state.messages.append({"role": "user", "content": prompt})
         
         # Display user message
@@ -188,7 +217,8 @@ with patient_col:
         # Get AI response
         with st.chat_message("assistant"):
             with st.spinner("AI is thinking..."):
-                full_response = call_openai(st.session_state.messages)
+                # Call OpenAI with prompt ID
+                full_response = call_openai_with_prompt_id(prompt)
                 
                 if full_response:
                     # Extract summaries if present
@@ -199,6 +229,14 @@ with patient_col:
                     
                     # Clean response for display
                     display_response = clean_response_for_display(full_response)
+                    
+                    # Extract just the assistant's response
+                    # Look for the last "Assistant:" in the response
+                    if "Assistant:" in full_response:
+                        parts = full_response.split("Assistant:")
+                        if len(parts) > 1:
+                            display_response = parts[-1].strip()
+                            display_response = clean_response_for_display(display_response)
                     
                     # Save message
                     st.session_state.messages.append({
@@ -249,7 +287,8 @@ with doctor_col:
                 "timestamp": datetime.now().isoformat(),
                 "patient_summary": st.session_state.patient_summary,
                 "clinical_summary": st.session_state.clinical_summary,
-                "conversation": st.session_state.messages
+                "conversation": st.session_state.messages,
+                "prompt_id": PROMPT_ID
             }
             st.download_button(
                 "💾 Export JSON",
@@ -267,51 +306,36 @@ with doctor_col:
             - Patient should say "that's all" or "I'm done" to generate summaries
             - Clinical summary includes full medical details
             - Patient only sees simplified summary
+            - Using Prompt ID method for responses
             """)
 
 # Sidebar controls
 with st.sidebar:
     st.header("⚙️ Controls")
     
-    # Model selection
-    model = st.selectbox(
-        "AI Model",
-        ["gpt-4", "gpt-3.5-turbo"],
-        index=0,
-        help="GPT-4 is more accurate, GPT-3.5 is faster/cheaper"
-    )
-    st.session_state["model"] = model
-    
     # Session info
     st.divider()
     st.subheader("📊 Session Info")
     st.info(f"Started: {datetime.now().strftime('%I:%M %p')}")
     
-    # Show prompt ID reference
-    with st.expander("📝 Prompt Reference"):
-        st.code("pmpt_68906b8c98b08197884e6957b551a55a0940c6dfad2636d6")
-        st.caption("Your OpenAI Playground prompt ID")
+    # Show prompt info
+    with st.expander("📝 Prompt Configuration"):
+        st.code(f"ID: {PROMPT_ID[:20]}...")
+        st.code(f"Version: {PROMPT_VERSION}")
+        st.caption("Using responses.create API")
     
     # Status check
     st.divider()
     st.subheader("✅ Status Check")
-    
-    # Check configuration
     api_status = "✅ Found" if get_api_key() else "❌ Missing"
     st.write(f"API Key: {api_status}")
-    
-    try:
-        prompt_status = "✅ Found" if get_system_prompt() else "❌ Missing"
-    except:
-        prompt_status = "❌ Missing"
-    st.write(f"Medical Prompt: {prompt_status}")
+    st.write(f"Method: responses.create")
     
     # Reset button
     st.divider()
     if st.button("🔄 New Consultation", type="primary", use_container_width=True):
         for key in list(st.session_state.keys()):
-            if key != "model":
-                del st.session_state[key]
+            del st.session_state[key]
         st.rerun()
     
     # Quick guide
@@ -332,13 +356,13 @@ with st.sidebar:
     # Footer
     st.divider()
     st.caption("🏥 LinQMD Health Assistant")
-    st.caption("⚡ Powered by LinqMD")
+    st.caption("⚡ Powered by AI")
 
 # Custom CSS
 st.markdown("""
 <style>
     .stChatMessage {
-        background-color: #2D2D2D2D;
+        background-color: #f0f2f6;
         border-radius: 10px;
         margin: 5px 0;
     }
@@ -350,6 +374,3 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
-
-
-

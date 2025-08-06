@@ -12,6 +12,24 @@ st.set_page_config(
 
 # Initialize OpenAI client - only API key from secrets
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+from openai import OpenAI
+client = OpenAI()
+
+response = client.responses.create(
+  prompt={
+    "id": "pmpt_6890c2093c388190a66ef880c473a00203ff24f87032e5f6",
+    "version": "4"
+  },
+  input=[],
+  text={
+    "format": {
+      "type": "text"
+    }
+  },
+  reasoning={},
+  max_output_tokens=2048,
+  store=True
+)
 
 # Hardcode your Assistant ID from OpenAI Playground here
 ASSISTANT_ID = "asst_XXXXXXXXXXXXXXXXXXXXXXXX"  # Replace with your actual Assistant ID
@@ -164,3 +182,4 @@ if st.button("🔄 New Consultation"):
     st.session_state.patient_summary = ""
     st.session_state.clinical_summary = ""
     st.rerun()
+

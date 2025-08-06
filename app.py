@@ -10,9 +10,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize OpenAI client - only API key from secrets
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-from openai import OpenAI
 client = OpenAI()
 
 response = client.responses.create(
@@ -182,4 +179,5 @@ if st.button("🔄 New Consultation"):
     st.session_state.patient_summary = ""
     st.session_state.clinical_summary = ""
     st.rerun()
+
 

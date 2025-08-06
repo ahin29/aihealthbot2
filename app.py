@@ -5,16 +5,16 @@ import re
 
 # Page config
 st.set_page_config(
-    page_title="LinqMD Health Assistant",
+    page_title="Medical Intake",
     page_icon="🏥",
     layout="wide"
 )
 
-# Initialize OpenAI client
+# Initialize OpenAI client - only API key from secrets
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# Your Assistant ID from OpenAI Playground
-ASSISTANT_ID = st.secrets["ASSISTANT_ID"]  # Store this in secrets too
+# Hardcode your Assistant ID from OpenAI Playground here
+ASSISTANT_ID = "asst_XXXXXXXXXXXXXXXXXXXXXXXX"  # Replace with your actual Assistant ID
 
 # Initialize session state
 if 'thread_id' not in st.session_state:
@@ -90,52 +90,55 @@ with col1:
                     st.markdown(f"**Assistant:** {display_text}")
     
     # Input
-    user_input = st.text_input("Your message:", key="input")
+    user_input = st.text_input("Your message:", key="input", placeholder="Describe symptoms or type 'done' when finished")
     
     if st.button("Send") and user_input:
         # Add to messages
         st.session_state.messages.append({"role": "user", "content": user_input})
         
-        # Send to Assistant
-        client.beta.threads.messages.create(
-            thread_id=st.session_state.thread_id,
-            role="user",
-            content=user_input
-        )
-        
-        # Run Assistant
-        run = client.beta.threads.runs.create(
-            thread_id=st.session_state.thread_id,
-            assistant_id=ASSISTANT_ID
-        )
-        
-        # Wait for response
-        with st.spinner("Thinking..."):
-            while run.status != "completed":
-                time.sleep(1)
-                run = client.beta.threads.runs.retrieve(
-                    thread_id=st.session_state.thread_id,
-                    run_id=run.id
-                )
+        try:
+            # Send to Assistant
+            client.beta.threads.messages.create(
+                thread_id=st.session_state.thread_id,
+                role="user",
+                content=user_input
+            )
+            
+            # Run Assistant
+            run = client.beta.threads.runs.create(
+                thread_id=st.session_state.thread_id,
+                assistant_id=ASSISTANT_ID
+            )
+            
+            # Wait for response
+            with st.spinner("Processing..."):
+                while run.status not in ["completed", "failed"]:
+                    time.sleep(1)
+                    run = client.beta.threads.runs.retrieve(
+                        thread_id=st.session_state.thread_id,
+                        run_id=run.id
+                    )
+                    
                 if run.status == "failed":
-                    st.error("Failed to get response")
-                    break
-        
-        # Get response
-        messages = client.beta.threads.messages.list(thread_id=st.session_state.thread_id)
-        assistant_msg = messages.data[0].content[0].text.value
-        
-        # Store response
-        st.session_state.messages.append({"role": "assistant", "content": assistant_msg})
-        
-        # Extract summaries
-        _, patient_sum, clinical_sum = extract_summaries(assistant_msg)
-        if patient_sum:
-            st.session_state.patient_summary = patient_sum
-        if clinical_sum:
-            st.session_state.clinical_summary = clinical_sum
-        
-        st.rerun()
+                    st.error("Failed to get response. Please check your Assistant ID.")
+                else:
+                    # Get response
+                    messages = client.beta.threads.messages.list(thread_id=st.session_state.thread_id)
+                    assistant_msg = messages.data[0].content[0].text.value
+                    
+                    # Store response
+                    st.session_state.messages.append({"role": "assistant", "content": assistant_msg})
+                    
+                    # Extract summaries
+                    _, patient_sum, clinical_sum = extract_summaries(assistant_msg)
+                    if patient_sum:
+                        st.session_state.patient_summary = patient_sum
+                    if clinical_sum:
+                        st.session_state.clinical_summary = clinical_sum
+                    
+                    st.rerun()
+        except Exception as e:
+            st.error(f"Error: {str(e)}")
     
     # Show patient summary
     if st.session_state.patient_summary:

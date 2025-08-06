@@ -19,12 +19,10 @@ if "patient_summary" not in st.session_state:
     st.session_state.patient_summary = ""
 if "clinical_summary" not in st.session_state:
     st.session_state.clinical_summary = ""
-if "conversation_history" not in st.session_state:
-    st.session_state.conversation_history = []
 
 # Prompt configuration
 PROMPT_ID = "pmpt_68906b8c98b08197884e6957b551a55a0940c6dfad2636d6"
-PROMPT_VERSION = "4"
+PROMPT_VERSION = "3"
 
 def extract_summaries(text):
     """Extract both summaries from AI response"""
@@ -54,12 +52,7 @@ def get_api_key():
         if api_key:
             return api_key
         else:
-            st.error("""
-            ❌ **OpenAI API Key not found!**
-            
-            Please add your OpenAI API key to Streamlit secrets:
-            `OPENAI_API_KEY = "sk-your-actual-api-key"`
-            """)
+            st.error("❌ **OpenAI API Key not found!**")
             st.stop()
 
 @st.cache_resource
@@ -68,92 +61,27 @@ def get_openai_client():
     api_key = get_api_key()
     return OpenAI(api_key=api_key)
 
-def build_conversation_text():
-    """Build conversation history as a single text string"""
-    conversation = ""
-    for msg in st.session_state.messages:
-        role = "Patient" if msg["role"] == "user" else "Assistant"
-        conversation += f"{role}: {msg['content']}\n\n"
-    return conversation.strip()
-
-def call_openai_with_prompt_id(user_message):
-    """Call OpenAI API using prompt ID and responses.create method"""
+def call_openai_standard(messages):
+    """Standard chat completion method"""
     try:
         client = get_openai_client()
         
-        # Build the conversation history
-        conversation_history = build_conversation_text()
+        # Get the prompt from secrets or use a default
+        try:
+            system_prompt = st.secrets["MEDICAL_PROMPT"]
+        except:
+            system_prompt = """You are a medical assistant collecting patient information. 
+            When the consultation ends (user says 'that's all' or similar), generate two summaries:
+            1. Patient summary between ---BEGIN_PATIENT_SUMMARY--- and ---END_PATIENT_SUMMARY---
+            2. Clinical summary between ---BEGIN_CLINICAL_SUMMARY_CONFIDENTIAL--- and ---END_CLINICAL_SUMMARY_CONFIDENTIAL---"""
         
-        # Prepare the input with the new user message
-        if conversation_history:
-            full_input = f"{conversation_history}\n\nPatient: {user_message}"
-        else:
-            full_input = f"Patient: {user_message}"
-        
-        # Debug info
-        with st.sidebar:
-            with st.expander("🐛 Debug Info", expanded=False):
-                st.write(f"Prompt ID: {PROMPT_ID}")
-                st.write(f"Version: {PROMPT_VERSION}")
-                st.write(f"Messages: {len(st.session_state.messages)}")
-                st.write("Using responses.create method")
-        
-        # Call OpenAI using the prompt ID
-        response = client.responses.create(
-            prompt={
-                "id": PROMPT_ID,
-                "version": PROMPT_VERSION
-            },
-            input=[{
-                "type": "text",
-                "text": full_input
-            }],
-            text={
-                "format": {
-                    "type": "text"
-                }
-            },
-            reasoning={},
-            max_output_tokens=2048,
-            store=True
-        )
-        
-        # Extract the response text
-        if hasattr(response, 'text') and hasattr(response.text, 'value'):
-            return response.text.value
-        elif hasattr(response, 'choices') and len(response.choices) > 0:
-            return response.choices[0].message.content
-        else:
-            # Try to extract text from response object
-            response_text = str(response)
-            st.write("Debug - Response structure:", response)
-            return response_text
-            
-    except AttributeError as e:
-        st.error(f"The responses.create method is not available. Error: {str(e)}")
-        st.info("Falling back to standard chat completion...")
-        return call_openai_standard(user_message)
-        
-    except Exception as e:
-        st.error(f"❌ OpenAI API Error: {str(e)}")
-        with st.expander("Error Details"):
-            st.write(f"Error type: {type(e).__name__}")
-            st.write(f"Error message: {str(e)}")
-        return None
-
-def call_openai_standard(user_message):
-    """Fallback to standard chat completion if prompt ID method fails"""
-    try:
-        client = get_openai_client()
-        
-        # Build messages array
-        messages = [{"role": "system", "content": "You are a medical assistant. Generate summaries with delimiters ---BEGIN_PATIENT_SUMMARY--- and ---BEGIN_CLINICAL_SUMMARY_CONFIDENTIAL---"}]
-        messages.extend(st.session_state.messages)
-        messages.append({"role": "user", "content": user_message})
+        # Build messages for API
+        api_messages = [{"role": "system", "content": system_prompt}]
+        api_messages.extend(messages)
         
         response = client.chat.completions.create(
             model="gpt-4",
-            messages=messages,
+            messages=api_messages,
             temperature=0.3,
             max_tokens=2000
         )
@@ -161,7 +89,7 @@ def call_openai_standard(user_message):
         return response.choices[0].message.content
         
     except Exception as e:
-        st.error(f"Standard API also failed: {str(e)}")
+        st.error(f"API Error: {str(e)}")
         return None
 
 # Main app
@@ -191,13 +119,13 @@ patient_col, doctor_col = st.columns([1, 1])
 with patient_col:
     st.header("💬 Patient Consultation")
     
-    # Display chat messages
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            if msg["role"] == "assistant":
-                display_text = msg.get("display", msg["content"])
-                st.write(display_text)
-            else:
+    # Create a container for messages
+    message_container = st.container()
+    
+    # Display all messages
+    with message_container:
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
                 st.write(msg["content"])
     
     # Show patient summary if available
@@ -205,51 +133,32 @@ with patient_col:
         st.success("📋 Your Summary:")
         st.info(st.session_state.patient_summary)
     
-    # Chat input
-    if prompt := st.chat_input("Describe your symptoms..."):
-        # Add user message to display
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        
-        # Display user message
-        with st.chat_message("user"):
-            st.write(prompt)
+    # Chat input at the bottom
+    user_input = st.chat_input("Describe your symptoms...")
+    
+    if user_input:
+        # Add user message to state and display
+        st.session_state.messages.append({"role": "user", "content": user_input})
         
         # Get AI response
-        with st.chat_message("assistant"):
-            with st.spinner("AI is thinking..."):
-                # Call OpenAI with prompt ID
-                full_response = call_openai_with_prompt_id(prompt)
-                
-                if full_response:
-                    # Extract summaries if present
-                    patient_sum, clinical_sum = extract_summaries(full_response)
-                    if patient_sum and clinical_sum:
-                        st.session_state.patient_summary = patient_sum
-                        st.session_state.clinical_summary = clinical_sum
-                    
-                    # Clean response for display
-                    display_response = clean_response_for_display(full_response)
-                    
-                    # Extract just the assistant's response
-                    # Look for the last "Assistant:" in the response
-                    if "Assistant:" in full_response:
-                        parts = full_response.split("Assistant:")
-                        if len(parts) > 1:
-                            display_response = parts[-1].strip()
-                            display_response = clean_response_for_display(display_response)
-                    
-                    # Save message
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": full_response,
-                        "display": display_response
-                    })
-                    
-                    # Display response
-                    st.write(display_response)
-                else:
-                    st.error("Failed to get response. Check error message above.")
+        assistant_response = call_openai_standard(st.session_state.messages)
         
+        if assistant_response:
+            # Extract summaries if present
+            patient_sum, clinical_sum = extract_summaries(assistant_response)
+            if patient_sum and clinical_sum:
+                st.session_state.patient_summary = patient_sum
+                st.session_state.clinical_summary = clinical_sum
+            
+            # Clean response for display
+            display_response = clean_response_for_display(assistant_response)
+            
+            # Add assistant message to state
+            st.session_state.messages.append({"role": "assistant", "content": display_response})
+        else:
+            st.session_state.messages.append({"role": "assistant", "content": "I apologize, but I couldn't process your message. Please try again."})
+        
+        # Rerun to display new messages
         st.rerun()
 
 # DOCTOR DASHBOARD (Right side)
@@ -287,8 +196,7 @@ with doctor_col:
                 "timestamp": datetime.now().isoformat(),
                 "patient_summary": st.session_state.patient_summary,
                 "clinical_summary": st.session_state.clinical_summary,
-                "conversation": st.session_state.messages,
-                "prompt_id": PROMPT_ID
+                "conversation": st.session_state.messages
             }
             st.download_button(
                 "💾 Export JSON",
@@ -306,7 +214,6 @@ with doctor_col:
             - Patient should say "that's all" or "I'm done" to generate summaries
             - Clinical summary includes full medical details
             - Patient only sees simplified summary
-            - Using Prompt ID method for responses
             """)
 
 # Sidebar controls
@@ -318,18 +225,11 @@ with st.sidebar:
     st.subheader("📊 Session Info")
     st.info(f"Started: {datetime.now().strftime('%I:%M %p')}")
     
-    # Show prompt info
-    with st.expander("📝 Prompt Configuration"):
-        st.code(f"ID: {PROMPT_ID[:20]}...")
-        st.code(f"Version: {PROMPT_VERSION}")
-        st.caption("Using responses.create API")
-    
-    # Status check
+    # Check configuration
     st.divider()
     st.subheader("✅ Status Check")
     api_status = "✅ Found" if get_api_key() else "❌ Missing"
     st.write(f"API Key: {api_status}")
-    st.write(f"Method: responses.create")
     
     # Reset button
     st.divider()
@@ -355,23 +255,19 @@ with st.sidebar:
     
     # Footer
     st.divider()
-    st.caption("🏥 LinQMD Health Assistant")
+    st.caption("🏥 LinQMD Medical Assistant")
     st.caption("⚡ Powered by AI")
 
 # Custom CSS
 st.markdown("""
 <style>
     .stChatMessage {
-        background-color: #f0f2f6;
+        background-color: #000000;
         border-radius: 10px;
         margin: 5px 0;
     }
     .stAlert {
         border-radius: 10px;
     }
-    .stButton > button {
-        width: 100%;
-    }
 </style>
 """, unsafe_allow_html=True)
-

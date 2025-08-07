@@ -159,7 +159,7 @@ with col2:
         st.markdown("""
         <style>
         .clinical-summary {
-            background-color: #0000ff;
+            background-color: #000000;
             border: 2px solid #ffc9c9;
             border-radius: 10px;
             padding: 20px;
@@ -209,4 +209,5 @@ with st.sidebar:
         st.success("✅ Consultation Complete")
     else:
         st.info("🔄 Consultation in Progress")
+
 

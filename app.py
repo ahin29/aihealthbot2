@@ -1,91 +1,162 @@
 import streamlit as st
-import openai
 from openai import OpenAI
+import re
 
-# Set up the page
-st.set_page_config(page_title="My ChatBot", page_icon="🤖")
-st.title("LinqMD Health Assistant")
+# Page config
+st.set_page_config(
+    page_title="Medical Intake",
+    page_icon="🏥",
+    layout="wide"
+)
 
-# Initialize OpenAI client
-@st.cache_resource
-def get_openai_client():
-    return OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+# Initialize OpenAI client with API key from secrets
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# Initialize session state for conversation history
-if "messages" not in st.session_state:
+# Prompt configuration
+PROMPT_ID = "pmpt_6890c2093c388190a66ef880c473a00203ff24f87032e5f6"
+PROMPT_VERSION = "4"
+
+# Initialize session state
+if 'messages' not in st.session_state:
     st.session_state.messages = []
+if 'patient_summary' not in st.session_state:
+    st.session_state.patient_summary = ""
+if 'clinical_summary' not in st.session_state:
+    st.session_state.clinical_summary = ""
 
-# Display chat history
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+# Simple styling
+st.markdown("""
+<style>
+    .clinical-summary { 
+        background: #fff9f9; 
+        padding: 15px; 
+        border-radius: 10px;
+        border: 1px solid #ffcccc;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# Chat input
-if prompt := st.chat_input("Type your message here..."):
-    # Add user message to chat history
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    
-    # Display user message
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    
-    # Generate bot response
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            try:
-                client = get_openai_client()
-                
-                # Build conversation history for the prompt
-                # Convert our chat history to the format the API expects
-                conversation_context = ""
-                for msg in st.session_state.messages:
-                    if msg["role"] == "user":
-                        conversation_context += f"Patient: {msg['content']}\n"
-                    else:
-                        conversation_context += f"Assistant: {msg['content']}\n"
-                
-                # Add the current message
-                conversation_context += f"Patient: {prompt}\n"
-                
-                # Using your OpenAI Playground prompt with full conversation context
-                response = client.responses.create(
-                    prompt={
-                        "id": "pmpt_6890c2093c388190a66ef880c473a00203ff24f87032e5f6",
-                        "version": "4"
-                    },
-                    # Pass the full conversation context
-                    input=conversation_context
-                )
-                
-                # Extract the bot response from the output array
-                if hasattr(response, 'output') and len(response.output) > 0:
-                    output_message = response.output[0]
-                    if hasattr(output_message, 'content') and len(output_message.content) > 0:
-                        content_item = output_message.content[0]
-                        if hasattr(content_item, 'text'):
-                            bot_response = content_item.text
-                        else:
-                            bot_response = str(content_item)
-                    else:
-                        bot_response = "No content in output message"
-                else:
-                    bot_response = "No output in response"
-                st.markdown(bot_response)
-                
-                # Add bot response to chat history
-                st.session_state.messages.append({"role": "assistant", "content": bot_response})
-                
-            except Exception as e:
-                st.error(f"Error: {str(e)}")
-                st.info("Please check your API key and try again.")
+st.title("🏥 Medical Intake Assistant")
 
-# Sidebar with instructions
-with st.sidebar:
-    st.header("Instructions")
-    st.write("1. Type your message in the chat box")
-    st.write("2. Press Enter to send")
-    st.write("3. Wait for the bot to respond")
+# Extract summaries from text
+def extract_summaries(text):
+    display_text = text
+    patient_summary = ""
+    clinical_summary = ""
     
-    if st.button("Clear Chat"):
-        st.session_state.messages = []
+    # Extract patient summary
+    if "---BEGIN_PATIENT_SUMMARY---" in text:
+        patient_match = re.search(
+            r'---BEGIN_PATIENT_SUMMARY---(.*?)---END_PATIENT_SUMMARY---', 
+            text, re.DOTALL
+        )
+        if patient_match:
+            patient_summary = patient_match.group(1).strip()
+            display_text = display_text.replace(patient_match.group(0), "")
+    
+    # Extract clinical summary
+    if "---BEGIN_CLINICAL_SUMMARY_CONFIDENTIAL---" in text:
+        clinical_match = re.search(
+            r'---BEGIN_CLINICAL_SUMMARY_CONFIDENTIAL---(.*?)---END_CLINICAL_SUMMARY_CONFIDENTIAL---', 
+            text, re.DOTALL
+        )
+        if clinical_match:
+            clinical_summary = clinical_match.group(1).strip()
+            display_text = display_text.replace(clinical_match.group(0), "")
+    
+    return display_text.strip(), patient_summary, clinical_summary
+
+# Get AI response using stored prompt
+def get_ai_response(conversation_history):
+    try:
+        # Format the conversation as a single input string
+        conversation_text = "\n".join([
+            f"{msg['role'].upper()}: {msg['content']}" 
+            for msg in conversation_history
+        ])
+        
+        # Use the stored prompt with conversation history as input
+        response = client.responses.create(
+            prompt={
+                "id": PROMPT_ID,
+                "version": PROMPT_VERSION
+            },
+            input=[conversation_text],
+            text={
+                "format": {
+                    "type": "text"
+                }
+            },
+            reasoning={},
+            max_output_tokens=2048,
+            store=True
+        )
+        
+        return response.text
+        
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# Two columns layout
+col1, col2 = st.columns(2)
+
+# Patient Chat (Left)
+with col1:
+    st.subheader("💬 Patient Chat")
+    
+    # Chat display
+    chat_box = st.container(height=400)
+    with chat_box:
+        for msg in st.session_state.messages:
+            if msg["role"] == "user":
+                st.markdown(f"**You:** {msg['content']}")
+            else:
+                display_text, _, _ = extract_summaries(msg['content'])
+                if display_text:
+                    st.markdown(f"**Assistant:** {display_text}")
+    
+    # Input
+    user_input = st.text_input("Your message:", key="input", placeholder="Describe symptoms or type 'done' when finished")
+    
+    if st.button("Send") and user_input:
+        # Add user message
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        
+        # Get AI response using stored prompt
+        with st.spinner("Processing..."):
+            ai_response = get_ai_response(st.session_state.messages)
+        
+        # Add assistant response
+        st.session_state.messages.append({"role": "assistant", "content": ai_response})
+        
+        # Extract summaries
+        _, patient_sum, clinical_sum = extract_summaries(ai_response)
+        if patient_sum:
+            st.session_state.patient_summary = patient_sum
+        if clinical_sum:
+            st.session_state.clinical_summary = clinical_sum
+        
         st.rerun()
+    
+    # Show patient summary
+    if st.session_state.patient_summary:
+        st.markdown("---")
+        st.markdown("**Your Summary:**")
+        st.info(st.session_state.patient_summary)
+
+# Doctor's Summary (Right)
+with col2:
+    st.subheader("👨‍⚕️ Clinical Summary")
+    
+    if st.session_state.clinical_summary:
+        st.markdown(f'<div class="clinical-summary">{st.session_state.clinical_summary}</div>', 
+                   unsafe_allow_html=True)
+    else:
+        st.info("Clinical summary will appear here after consultation")
+
+# Reset button
+if st.button("🔄 New Consultation"):
+    st.session_state.messages = []
+    st.session_state.patient_summary = ""
+    st.session_state.clinical_summary = ""
+    st.rerun()

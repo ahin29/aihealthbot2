@@ -4,8 +4,8 @@ from openai import OpenAI
 import re
 
 # Set up the page with wide layout for two columns
-st.set_page_config(page_title="Medical Intake Assistant", page_icon="🏥", layout="wide")
-st.title("🏥 Medical Intake Assistant")
+st.set_page_config(page_title="LinQMD Medical Intake Assistant", page_icon="🏥", layout="wide")
+st.title("🏥 LinQMD Medical Intake Assistant")
 
 # Initialize OpenAI client
 @st.cache_resource
@@ -155,21 +155,10 @@ with col2:
     st.subheader("👨‍⚕️ Clinical Summary (Doctor's View)")
     
     if st.session_state.clinical_summary:
-        # Add styling for clinical summary
-        st.markdown("""
-        <style>
-        .clinical-summary {
-            background-color: #000000;
-            border: 2px solid #ffc9c9;
-            border-radius: 10px;
-            padding: 20px;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        st.markdown('<div class="clinical-summary">', unsafe_allow_html=True)
-        st.markdown(st.session_state.clinical_summary)
-        st.markdown('</div>', unsafe_allow_html=True)
+        # Display clinical summary in a clean container
+        container = st.container(border=True)
+        with container:
+            st.markdown(st.session_state.clinical_summary)
     else:
         st.info("Clinical summary will appear here after the consultation is complete.")
         
@@ -209,5 +198,3 @@ with st.sidebar:
         st.success("✅ Consultation Complete")
     else:
         st.info("🔄 Consultation in Progress")
-
-
